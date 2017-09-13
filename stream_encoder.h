@@ -9,6 +9,8 @@
 #include <deque>
 #include <map>
 
+#include "stream_info.h"
+
 using namespace ms;
 
 namespace ms
@@ -19,29 +21,23 @@ class VideoEncoder;
 class AudioEncoder;
 }
 
-typedef struct OutputConfig {
-    bool streaming;
-    OutputFile* output;
-} OutputConfig;
-
 //ffmpeg
 struct AVFrame;
 
 class StreamEncoder
 {
 public:
-    StreamEncoder(std::string outputFileName, std::string formatName, AudioEncodeConfig& ac, VideoEncodeConfig& vc);
+    StreamEncoder(std::string outputFileName, std::string formatName, AudioEncodeConfig* ac, VideoEncodeConfig* vc);
     ~StreamEncoder();
 
     int WriteVideo(AVFrame*);
     int WriteAudio(AVFrame*);
-    
-    void SetDelaySec(int sec);
 
     void StartEncodeThread();
     void StopEncodeThread();
 
     void StopAndFlush();
+    void SetStreamInfo(StreamInfo* info);
 
 private:
     void flushVideoFrameQ();
@@ -56,10 +52,12 @@ private:
     void ensureAudioEncoderValid(AVFrame* frame);
     void ensureVideoEncoderValid(AVFrame* frame);
 
-    void clearExpiredPackets();
+    void writePacket();
+    void openFile();
+    void closeFile();
 
-    AudioEncodeConfig audioConfig;
-    VideoEncodeConfig videoConfig;
+    AudioEncodeConfig* audioConfig;
+    VideoEncodeConfig* videoConfig;
 
     bool abortRequest;
 
@@ -77,8 +75,6 @@ private:
 
     Muxer* muxer;
 
-    //std::mutex vPacketQMutex;
-    //std::mutex aPacketQMutex;
     std::mutex muxMutex;
     std::deque<AVPacket> vPacketQ;
     std::deque<AVPacket> aPacketQ;
@@ -89,8 +85,13 @@ private:
     AVCodecParameters* videoCodecPar;
     AVCodecParameters* audioCodecPar;
 
-    int delaySec;
-};
+    int64_t last_key_pts;
+    int64_t current_pts; // in milliseconds
+    int segment_count;
+    int serial_num = 0;
+    StreamInfo* stream_info;
+    SegmentInfo segment_info;
 
+};
 
 #endif

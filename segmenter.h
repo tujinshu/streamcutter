@@ -41,6 +41,7 @@ private:
     bool has_video;
     bool has_audio;
     std::thread processThread;
+    int64_t last_pkt_dts; // in millisecond
 };
 
 #endif
