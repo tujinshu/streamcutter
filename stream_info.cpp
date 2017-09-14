@@ -33,26 +33,26 @@ bool StreamInfo::AssembleM3u8ListByRealTime(std::vector<std::pair<int64_t, int64
     }
     std::unique_lock<std::mutex> lock(stream_info_mutex);
     //check segments should be assembled
-    int index = 0;
+    size_t index = 0;
     int64_t start_time = time_intervals[0].first;
     int64_t end_time = time_intervals[0].second;
     std::vector<std::vector<SegmentInfo>> result;
     result.push_back(std::vector<SegmentInfo>());
     bool finish = false;
-    for(int m = 0; m < stream_lists.size() || !finish; ++m){
+    for(size_t m = 0; m < stream_lists.size() && !finish; ++m){
         int length = result.size();
         //new list
         if(result[length - 1].size() != 0){
             result.push_back(std::vector<SegmentInfo>());
         }
-        for(int i = 0; i < stream_lists[m].size(); ){
+        for(size_t i = 0; i < stream_lists[m].size(); ){
             SegmentInfo& seg_info = stream_lists[m][i];
             if(seg_info.real_start_time + seg_info.duration <= start_time){
                 //pass
                 i++;
                 continue;
             }
-            if(seg_info.start_time >= end_time){
+            if(seg_info.real_start_time >= end_time){
                 //check next time interval
                 index++;
                 if(index >= time_intervals.size()){
@@ -98,14 +98,14 @@ bool StreamInfo::AssembleList(std::vector<std::vector<SegmentInfo>>& segments, s
     file << "#EXT-X-MEDIA-SEQUENCE:0" << std::endl;
     file << "#EXT-X-TARGETDURATION:5" << std::endl;
 
-    for(int m = 0; m < segments.size(); ++m) {
+    for(size_t m = 0; m < segments.size(); ++m) {
         if(m != 0 && segments[m].size() != 0) {
             //add discontinue tag
             file << "#EXT-X-DISCONTINUITY" << std::endl;
         }
 
-        for(int i = 0; i < segments[m].size(); ++i) {
-            file << "#EXTINF: " << segments[m][i].duration << std::endl;
+        for(size_t i = 0; i < segments[m].size(); ++i) {
+            file << "#EXTINF: " << segments[m][i].duration / 1000 << std::endl;
             file << segments[m][i].file_path << std::endl;
         }
     }

@@ -7,61 +7,28 @@ using namespace ms;
 
 static const int64_t MAX_AV_DIFF = 2000; //in milliseconds
 
-static bool GenPng(AVFrame* frame, std::string pngfilename)
-{
-    VideoEncodeConfig vc = {
-        frame->width,
-        frame->height,
-        //frame->format,
-        AV_PIX_FMT_YUVJ420P,
-        {1,1},
-        0,
-        1,
-        AV_CODEC_ID_MJPEG,
-        "mjpeg",
-        {1,1},
-        0,
-        ms::VBR
-    };
-
-    VideoEncoder* picEncoder = new VideoEncoder(vc);
-    VideoEncodeResult r =  picEncoder->WriteFrame(frame);
-    if(r.pkts.size() == 0){
-        r = picEncoder->WriteFrame(NULL);
-    }
-
-    if(r.pkts.size() == 0)
-        return false;
-
-    //get a packet
-    AVCodecParameters* pngCodecPar = avcodec_parameters_alloc();
-    avcodec_parameters_from_context(pngCodecPar, picEncoder->encodeCtx);
-    OutputFile* pngfile = new OutputFile(pngfilename, "", NULL, pngCodecPar);
-    Muxer muxer(pngfile->FmtCtx);
-    muxer.Write(&r.pkts[0]);
-    avcodec_parameters_free(&pngCodecPar);
-    delete pngfile;
-    return true;
-}
 
 Segmenter::Segmenter(std::string url, int segmentTime):
-    stream_info(url),
     filename(url),
-    input(nullptr),
-    videoDecoder(nullptr),
-    audioDecoder(nullptr),
-    demuxer(nullptr),
-    streamEncoder(nullptr),
+    input(NULL),
+    videoDecoder(NULL),
+    audioDecoder(NULL),
+    demuxer(NULL),
+    streamEncoder(NULL),
+    audioFilter(NULL),
     segment_time(segmentTime),
     thread_exit(false),
     has_video(false),
     has_audio(false),
-    last_pkt_dts(AV_NOPTS_VALUE)
+    last_pkt_dts(AV_NOPTS_VALUE),
+    pvc(NULL),
+    pac(NULL),
+    serial_num(0)
 {
 
 }
 
-void Segmenter::~Segmenter()
+Segmenter::~Segmenter()
 {
     if(videoDecoder)
         delete videoDecoder;
@@ -75,12 +42,12 @@ void Segmenter::~Segmenter()
         delete streamEncoder;
 }
 
-void Segmenter::init()
+bool Segmenter::init()
 {
     input = new InputFile(filename, NULL, NULL);
     if(!input->Available()){
         dlog("open input failed");
-        return;
+        return false;
     }
 
     //fetch format info
@@ -88,11 +55,11 @@ void Segmenter::init()
     dlog("start time: %" PRId64, fmt->start_time);
     dlog("start real time: %" PRId64, fmt->start_time_realtime);
 
-    int64_t gop_start_time = 0;
-    int64_t gop_end_time = 0;
-    int count = 0;
-    int frame_size = 0;
-    int total_frames = 0;
+   // int64_t gop_start_time = 0;
+   // int64_t gop_end_time = 0;
+   // int count = 0;
+   // int frame_size = 0;
+   // int total_frames = 0;
 
     //demux
     demuxer = new Demuxer(input->FmtCtx);
@@ -105,8 +72,10 @@ void Segmenter::init()
     audioDecoder = NULL;
     AVCodecParameters* audioPar = NULL;
     AVCodecParameters* videoPar = NULL;
-    VideoEncodeConfig vc;
-    AudioEncodeConfig ac;
+    //VideoEncodeConfig vc, *pvc = NULL;
+    //AudioEncodeConfig ac, *pac = NULL;
+    pvc = NULL;
+    pac = NULL;
 
     if(has_video) {
         //config
@@ -117,7 +86,7 @@ void Segmenter::init()
             videoPar->height,
             videoPar->format,
             input->FmtCtx->streams[demuxer->VideoStreamIndex]->time_base,
-            1000000,
+            2000000,
             25,//gopsize
             AV_CODEC_ID_H264,
             "libopenh264",
@@ -125,6 +94,7 @@ void Segmenter::init()
             0,
             ms::VBR
         };
+        pvc = &vc;
     }
 
     if(has_audio) {
@@ -137,6 +107,7 @@ void Segmenter::init()
             0,
             AV_CODEC_ID_AAC
         };
+        pac = &ac;
         audioFilter = new AudioFilter();
         AudioFrameArgs afa = {
             {1, audioPar->sample_rate},
@@ -146,15 +117,16 @@ void Segmenter::init()
         };
         audioFilter->config(afa, NULL);
     }
-    //FIXME: support video only or audio only
-    streamEncoder = new StreamEncoder("xx.ts", "", ac, vc);
-    streamEncoder->StartEncodeThread();
-
+    if(!has_audio && !has_video){
+        dlog("there was no video or audio");
+        return false;
+    }
+    return true;
 }
 
-void Segmenter::GetPlayList(std::vector<std::pair<int64_t, int64_t> > time_intervals, std::string &playlist_url)
+bool Segmenter::GetPlayList(std::vector<std::pair<int64_t, int64_t> > time_intervals, std::string &playlist_url)
 {
-
+    return stream_info.AssembleM3u8ListByRealTime(time_intervals, playlist_url);
 }
 
 void Segmenter::StopProcessStream()
@@ -168,12 +140,16 @@ void Segmenter::reinitStreamEncoder()
     if(streamEncoder){
         flushStreamEncoder();
     }
+    last_pkt_dts == AV_NOPTS_VALUE;
     //insert stream info
     stream_info.InsertSegmentList();
-    streamEncoder = new StreamEncoder();
+    //FIXME: support video only or audio only
+    streamEncoder = new StreamEncoder("xx.ts", "", pac, pvc);
+    //streamEncoder->SetSegmentTime(segment_time);
+    streamEncoder->SetStreamInfo(&stream_info);
+    streamEncoder->SetSerialNum(serial_num++);
+    streamEncoder->StartEncodeThread();
     //set streamEncoder
-
-
 
 }
 
@@ -213,6 +189,7 @@ bool Segmenter::checkPktDtsJumped(DemuxedData* data)
 
     //diff in milliseconds
     int64_t diff = current_dts - last_pkt_dts;
+    last_pkt_dts = current_dts;
     if(-MAX_AV_DIFF< diff && diff < MAX_AV_DIFF) {
         return false;
     }
@@ -224,7 +201,8 @@ bool Segmenter::consumePacket(DemuxedData* data)
     if(data->Type == PACKET_AUDIO) {
         DecodeResult r = audioDecoder->WritePacket(&data->Packet);
         for(auto frame : r.frames) {
-            frame->pts = av_rescale_q(frame->pts, audio_timebase, {1,frame->sample_rate});
+            AVRational audio_time_base = input->FmtCtx->streams[demuxer->AudioStreamIndex]->time_base;
+            frame->pts = av_rescale_q(frame->pts, audio_time_base, {1,frame->sample_rate});
             audioFilter->push_main_frame(frame);
             av_frame_free(&frame);
             int ret = 0;
@@ -242,25 +220,23 @@ bool Segmenter::consumePacket(DemuxedData* data)
     } else if (data->Type == PACKET_VIDEO) {
         DecodeResult r =  videoDecoder->WritePacket(&data->Packet);
         for(auto frame : r.frames) {
-            total_frames++;
-            if(total_frames % 25 == 1){
-                char pngfilename[20];
-                sprintf(pngfilename, "%03d.jpeg", total_frames/25);
-                GenPng(frame, pngfilename);
-                dlog("generate thumb pic: %s", pngfilename);
-            }
             streamEncoder->WriteVideo(frame);
         }
 
     } else {
 
     }
-
     av_packet_unref(&data->Packet);
     return true;
 }
 
-void Segmenter::ProcessStream()
+//thread wrapper for process function
+void Segmenter::StartProcess()
+{
+    processThread = std::thread(&Segmenter::processStream, this);
+}
+
+void Segmenter::processStream()
 {
     while(!thread_exit) {
         //open input and init decoder
@@ -279,12 +255,12 @@ void Segmenter::ProcessStream()
                 dlog("read eof or null");
                 break;
             }
-            if(!checkPktDtsJump(data)) {
+            if(checkPktDtsJumped(data)) {
                 //dts jump, reinit stream encoder
                 reinitStreamEncoder();
             }
             //consume pkt data
-            consumePkt(data);
+            consumePacket(data);
         }
         flushStreamEncoder();
     }

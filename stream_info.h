@@ -31,6 +31,4 @@ private:
     int count;
 };
 
-
-
 #endif

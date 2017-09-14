@@ -83,7 +83,7 @@ DecodeResult Decoder::WritePacket(AVPacket* pkt)
     } while(r.ret == 0);
 
     //ret was eagain or error
-    if(r.ret != AVERROR(EAGAIN)) {
+    if(r.ret != AVERROR(EAGAIN) && r.ret != AVERROR(EOF)) {
         av_log(NULL, AV_LOG_ERROR, "get frame failed: %s\n", av_err2str(r.ret));
         //free frames
         for(AVFrame* frame : r.frames){

@@ -38,6 +38,7 @@ public:
 
     void StopAndFlush();
     void SetStreamInfo(StreamInfo* info);
+    void SetSerialNum(int num);
 
 private:
     void flushVideoFrameQ();
@@ -55,6 +56,7 @@ private:
     void writePacket();
     void openFile();
     void closeFile();
+    bool GenPng(AVPacket* pkt, std::string pngfilename);
 
     AudioEncodeConfig* audioConfig;
     VideoEncodeConfig* videoConfig;
@@ -88,7 +90,7 @@ private:
     int64_t last_key_pts;
     int64_t current_pts; // in milliseconds
     int segment_count;
-    int serial_num = 0;
+    int serial_num;
     StreamInfo* stream_info;
     SegmentInfo segment_info;
 

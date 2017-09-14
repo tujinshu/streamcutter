@@ -1,13 +1,16 @@
-
 #include "ms/muxer.h"
 #include "ms/output_file.h"
+#include "ms/decoder.h"
 
 #include "stream_encoder.h"
 #include "ms/ms_util.h"
 
+#include "log.h"
+
 #include <thread>
 #include <chrono>
 #include <cstdlib>
+
 
 static void clearFrameQueue(std::deque<AVFrame*>& frameQ)
 {
@@ -58,7 +61,7 @@ StreamEncoder::StreamEncoder(std::string outputFileName, std::string formatName,
         *videoConfig = *vc;
     }
 
-    segment_info.real_start_time = av_gettime();
+    segment_info.real_start_time = av_gettime() / 1000;
     segment_info.duration = 0;
     openFile();
 }
@@ -94,6 +97,70 @@ StreamEncoder::~StreamEncoder()
         delete audioCodecPar;
 }
 
+bool StreamEncoder::GenPng(AVPacket* pkt, std::string pngfilename)
+{
+    if(pkt == NULL || (pkt->flags & 0x01) == 0){
+        dlog("pkt was null or pkt did not contain a key frame");
+        return false;
+    }
+    AVCodecParameters* videoPar = avcodec_parameters_alloc();
+    avcodec_parameters_from_context(videoPar, videoEncoder->encodeCtx);
+    Decoder videoDecoder(videoPar);
+    avcodec_parameters_free(&videoPar);
+    DecodeResult decodeRet =  videoDecoder.WritePacket(pkt);
+    if(decodeRet.frames.size() == 0){
+        decodeRet = videoDecoder.WritePacket(NULL);
+    }
+    if(decodeRet.frames.size() == 0) {
+        return false;
+    }
+    AVFrame* frame = decodeRet.frames[0];
+
+    VideoEncodeConfig vc = {
+        frame->width,
+        frame->height,
+        //frame->format,
+        AV_PIX_FMT_YUVJ420P,
+        {1,1},
+        0,
+        1,
+        AV_CODEC_ID_MJPEG,
+        "mjpeg",
+        {1,1},
+        0,
+        ms::VBR
+    };
+
+    VideoEncoder* picEncoder = new VideoEncoder(vc);
+    VideoEncodeResult r =  picEncoder->WriteFrame(frame);
+    if(r.pkts.size() == 0){
+        r = picEncoder->WriteFrame(NULL);
+    }
+
+    if(r.pkts.size() == 0)
+        return false;
+
+    //get a packet
+    AVCodecParameters* pngCodecPar = avcodec_parameters_alloc();
+    avcodec_parameters_from_context(pngCodecPar, picEncoder->encodeCtx);
+    OutputFile* pngfile = new OutputFile(pngfilename, "", NULL, pngCodecPar);
+    Muxer muxer(pngfile->FmtCtx);
+    muxer.Write(&r.pkts[0]);
+    avcodec_parameters_free(&pngCodecPar);
+    delete pngfile;
+    return true;
+}
+
+void StreamEncoder::SetStreamInfo(StreamInfo* info)
+{
+    stream_info = info;
+}
+
+void StreamEncoder::SetSerialNum(int num)
+{
+    serial_num = num;
+}
+
 void StreamEncoder::openFile()
 {
     char filename[20];
@@ -120,6 +187,7 @@ void StreamEncoder::closeFile()
 
     //post request
     stream_info->AppendSegment(segment_info);
+    std::cout << segment_info.file_path << std::endl;
 
     segment_count++;
 }
@@ -287,14 +355,17 @@ void StreamEncoder::writePacket()
 
     muxMutex.unlock();
 
-    if(pkt.stream_index == output->VideoStream->index && (pkt.flags & 0x01) != 0 && last_key_pts != AV_NOPTS_VALUE) {
-        std::cout << "time interval: " << pkt.dts - last_key_pts << std::endl;
-        int64_t duration = av_rescale_q(pkt.dts - last_key_pts, output->VideoStream->time_base, {1, 1000});
-        segment_info.duration = duration;
-        last_key_pts = pkt.dts;
+    if(pkt.stream_index == output->VideoStream->index && (pkt.flags & 0x01) != 0 ) {
+        if(last_key_pts != AV_NOPTS_VALUE){
+            std::cout << "time interval: " << pkt.dts - last_key_pts << std::endl;
+            int64_t duration = av_rescale_q(pkt.dts - last_key_pts, output->VideoStream->time_base, {1, 1000});
+            segment_info.duration = duration;
 
-        closeFile();
-        openFile();
+            closeFile();
+            openFile();
+        }
+        last_key_pts = pkt.dts;
+        GenPng(&pkt, segment_info.thumbnail_path);
     }
     ret = muxer->Write(&pkt);
 

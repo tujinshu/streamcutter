@@ -17,17 +17,19 @@
 class Segmenter
 {
 public:
-    Segmenter(std::string url, int segment_time);
+    Segmenter(std::string url, int segmentTime);
     ~Segmenter();
-    void ProcessStream();
+    void StartProcess();
     void StopProcessStream();
     bool GetPlayList(std::vector<std::pair<int64_t, int64_t>> time_intervals, std::string& playlist_url);
 
 private:
-    void init();
-    bool checkPktDtsJumped();
-    bool reinitStreamEncoder();
+    void processStream();
+    bool init();
+    bool checkPktDtsJumped(ms::DemuxedData*);
+    void reinitStreamEncoder();
     void flushStreamEncoder();
+    bool consumePacket(ms::DemuxedData*);
 
     StreamInfo stream_info;
     std::string filename;
@@ -36,12 +38,18 @@ private:
     Decoder* audioDecoder;
     Demuxer* demuxer;
     StreamEncoder* streamEncoder;
+    AudioFilter* audioFilter;
     int segment_time;
     bool thread_exit;
     bool has_video;
     bool has_audio;
     std::thread processThread;
     int64_t last_pkt_dts; // in millisecond
+    VideoEncodeConfig vc;
+    AudioEncodeConfig ac;
+    VideoEncodeConfig* pvc;
+    AudioEncodeConfig* pac;
+    int serial_num;
 };
 
 #endif

@@ -5,7 +5,7 @@
 #include "stream_encoder.h"
 
 #include "log.h"
-#include "segment_stream.h"
+#include "stream_info.h"
 #include "segmenter.h"
 
 #include <iostream>
@@ -19,35 +19,26 @@ int main(int argc, char** argv)
 {
     InitFFmpeg();
     //test("/home/huheng/Videos/samplemedia/Victorias.flv");
-    Segmenter* segmenter = new Segmenter("rtmp://live.mudu.tv/watch/nt33at");
+    //Segmenter* segmenter = new Segmenter("rtmp://live.mudu.tv/watch/nt33at", 1000);
+    //Segmenter* segmenter = new Segmenter("http://1212.long-vod.cdn.aodianyun.com/u/1212/m3u8/640x360/7e0cd690f4c6a44beee8b047a84bde03/7e0cd690f4c6a44beee8b047a84bde03.m3u8", 1000);
     //Segmenter* segmenter = new Segmenter("rtmp://mudu.ns.4l.hk/live/xx");
     //Segmenter* segmenter = new Segmenter("http://vod.mudu.tv/watch/eh0e0a_5.m3u8");
     //Segmenter* segmenter = new Segmenter("/home/huheng/Videos/samplemedia/xinwen.mp4");
     //Segmenter* segmenter = new Segmenter("/home/huheng/Videos/samplemedia/Victorias.flv");
-    //Segmenter* segmenter = new Segmenter("rtmp://live.mudu.tv/watch/8ong6e");
+    Segmenter* segmenter = new Segmenter("rtmp://live.mudu.tv/watch/8ong6e", 1000);
 
-    //test assemble
-    M3u8Assembler ma;
-    for(int i=0; i < 100; ++i){
-        char filepath[20];
-        sprintf(filepath, "%03d.ts", i);
-        SegmentInfo si = {filepath, 0 + i, 0+i, 1.0, i};
-        ma.AppendSegmentInfo(si);
-    }
-    std::vector<std::pair<double, double>> time_intervals;
-    //time_intervals.push_back(std::pair<double, double>(1.0,5.0));
-    time_intervals.emplace_back(1.0,5.0);
-    time_intervals.emplace_back(7.0,9.0);
-    //time_intervals.emplace_back(12.0,20.0);
-    time_intervals.emplace_back(std::pair<double, double>(7.0,9.0));
-    time_intervals.push_back(std::pair<double, double>(12.0,200.0));
+    segmenter->StartProcess();
+    std::this_thread::sleep_for(std::chrono::seconds(10));
+    //test playlist
+    std::vector<std::pair<int64_t, int64_t>> time_intervals;
+    int64_t current_time = av_gettime() / 1000;
+    time_intervals.emplace_back(current_time - 9000, current_time - 2000);
+    //time_intervals.emplace_back(7.0,9.0);
+    std::string playlist;
+    segmenter->GetPlayList(time_intervals, playlist);
+    std::cout << "play list url: " << playlist << std::endl;
 
-    std::string filename;
-    ma.AssembleByRelativeTime(time_intervals, filename);
-
-    dlog("filename: %s", filename.c_str());
-
-    segmenter->ProcessStream();
+    std::this_thread::sleep_for(std::chrono::seconds(10000));
 
     return 0;
 }
